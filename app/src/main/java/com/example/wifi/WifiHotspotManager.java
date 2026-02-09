@@ -1,7 +1,7 @@
 package com.example.wifi;
 
 import android.content.Context;
-import android.net.wifi.SoftApConfiguration;
+
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.LocalOnlyHotspotCallback;
 import android.net.wifi.WifiManager.LocalOnlyHotspotReservation;
@@ -107,26 +107,10 @@ public class WifiHotspotManager {
                 }
             };
 
-            boolean hasCustomConfig = desiredSsid != null && !desiredSsid.isEmpty();
-            boolean hasPassphrase = desiredPassword != null && !desiredPassword.isEmpty();
-            boolean shouldUseCustom = hasCustomConfig && hasPassphrase;
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && shouldUseCustom) {
-                SoftApConfiguration.Builder configBuilder = new SoftApConfiguration.Builder();
-                if (hasCustomConfig) {
-                    configBuilder.setSsid(desiredSsid);
-                }
-                if (hasPassphrase) {
-                    configBuilder.setPassphrase(desiredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK);
-                }
-                wifiManager.startLocalOnlyHotspot(
-                    configBuilder.build(),
-                    context.getMainExecutor(),
-                    callbackWrapper
-                );
-            } else {
-                wifiManager.startLocalOnlyHotspot(callbackWrapper, new Handler(Looper.getMainLooper()));
-            }
+            // Start local-only hotspot using system configuration. Custom SSID/password
+            // may not be supported on all Android versions; desired values are saved to
+            // preferences and displayed in the UI, but not forced here.
+            wifiManager.startLocalOnlyHotspot(callbackWrapper, new Handler(Looper.getMainLooper()));
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception starting hotspot", e);
             if (callback != null) {
