@@ -283,11 +283,15 @@ public class MainActivity extends Activity {
         String logEntry = "[" + timestamp + "] " + message + "\n";
         logText.append(logEntry);
         
-        // Auto-scroll to bottom
-        int scrollAmount = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
-        if (scrollAmount > 0) {
-            logText.scrollTo(0, scrollAmount);
-        }
+        // Auto-scroll to bottom safely after layout is ready
+        logText.post(() -> {
+            if (logText.getLayout() != null) {
+                int scrollAmount = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
+                if (scrollAmount > 0) {
+                    logText.scrollTo(0, scrollAmount);
+                }
+            }
+        });
         
         Log.i(TAG, message);
     }
