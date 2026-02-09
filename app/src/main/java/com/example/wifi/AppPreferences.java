@@ -9,6 +9,7 @@ public final class AppPreferences {
     private static final String KEY_SSID = "ssid";
     private static final String KEY_PASSWORD = "password";
     private static final String KEY_PROXY_PORT = "proxy_port";
+    private static final String KEY_KEEP_RUNNING = "keep_running";
 
     private AppPreferences() {
     }
@@ -44,6 +45,14 @@ public final class AppPreferences {
         if (!TextUtils.isEmpty(password) && TextUtils.isEmpty(getPassword(context))) {
             savePassword(context, password);
         }
+    }
+
+    public static boolean getKeepRunning(Context context) {
+        return getPrefs(context).getBoolean(KEY_KEEP_RUNNING, false);
+    }
+
+    public static void saveKeepRunning(Context context, boolean keep) {
+        getPrefs(context).edit().putBoolean(KEY_KEEP_RUNNING, keep).apply();
     }
 
     private static SharedPreferences getPrefs(Context context) {

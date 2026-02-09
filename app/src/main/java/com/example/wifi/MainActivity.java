@@ -15,6 +15,9 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.text.method.ScrollingMovementMethod;
+import android.widget.Switch;
+import android.provider.Settings;
+import android.net.Uri;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
@@ -47,6 +50,8 @@ public class MainActivity extends Activity {
     private EditText proxyPortInput;
     private Button saveButton;
     private Button exitButton;
+    private Switch keepRunningSwitch;
+    private Button notifSettingsButton;
 
     private HotspotService hotspotService;
     private boolean isServiceBound = false;
@@ -164,6 +169,8 @@ public class MainActivity extends Activity {
         proxyPortInput = findViewById(R.id.proxyPortInput);
         saveButton = findViewById(R.id.saveButton);
         exitButton = findViewById(R.id.exitButton);
+        keepRunningSwitch = findViewById(R.id.keepRunningSwitch);
+        notifSettingsButton = findViewById(R.id.notifSettingsButton);
 
         logText.setMovementMethod(new ScrollingMovementMethod());
         
@@ -177,6 +184,13 @@ public class MainActivity extends Activity {
 
         saveButton.setOnClickListener(v -> saveSettings(true));
         exitButton.setOnClickListener(v -> exitApp());
+
+        keepRunningSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            AppPreferences.saveKeepRunning(MainActivity.this, isChecked);
+            appendLog("Keep running in background: " + isChecked);
+        });
+
+        notifSettingsButton.setOnClickListener(v -> openNotificationSettings());
 
         loadSettings();
         appendLog("WiFi Router initialized");
@@ -241,6 +255,7 @@ public class MainActivity extends Activity {
             passwordInput.setText(savedPassword);
         }
         proxyPortInput.setText(String.valueOf(savedPort));
+        keepRunningSwitch.setChecked(AppPreferences.getKeepRunning(this));
     }
 
     private boolean saveSettings(boolean showToast) {
@@ -359,7 +374,12 @@ public class MainActivity extends Activity {
 
     private void exitApp() {
         appendLog("Exiting app...");
-        AppExitReceiver.stopAllServices(this);
+        // Stop services only if user has not opted to keep running in background
+        if (!AppPreferences.getKeepRunning(this)) {
+            AppExitReceiver.stopAllServices(this);
+        } else {
+            appendLog("KeepRunning enabled - services will continue in background");
+        }
         isRouterActive = false;
         stopDeviceUpdates();
         setRouterActiveUi(false);
@@ -368,6 +388,18 @@ public class MainActivity extends Activity {
         } else {
             finish();
         }
+    }
+
+    private void openNotificationSettings() {
+        Intent intent = new Intent();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent.setAction(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+        } else {
+            intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+        }
+        startActivity(intent);
     }
 
     private void startRouter() {
