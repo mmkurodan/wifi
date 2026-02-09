@@ -10,15 +10,24 @@ import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
-import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.text.SimpleDateFormat;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Locale;
 
@@ -26,6 +35,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     private static final int VPN_REQUEST_CODE = 100;
     private static final int PERMISSION_REQUEST_CODE = 101;
+    private static final long DEVICE_REFRESH_MS = 3000;
 
     private TextView statusText;
     private TextView ssidText;
@@ -39,6 +49,20 @@ public class MainActivity extends Activity {
     private boolean isServiceBound = false;
     private boolean isRouterActive = false;
     private long totalBytes = 0;
+    private int connectedDevices = 0;
+
+    private final Handler deviceHandler = new Handler(Looper.getMainLooper());
+    private final Runnable deviceUpdater = new Runnable() {
+        @Override
+        public void run() {
+            if (!isRouterActive) {
+                return;
+            }
+            int count = getConnectedDeviceCount();
+            updateConnectedDevices(count);
+            deviceHandler.postDelayed(this, DEVICE_REFRESH_MS);
+        }
+    };
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -53,11 +77,13 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         ssidText.setText(ssid != null ? ssid : "N/A");
                         passwordText.setText(password != null ? password : "N/A");
-                        ipText.setText("10.0.0.1");
+                        String hotspotIp = getHotspotIpAddress();
+                        ipText.setText(hotspotIp);
                         appendLog("Hotspot started: " + ssid);
-                        
-                        // Now start VPN service
-                        prepareVpn();
+
+                        appendLog("Set client proxy to " + hotspotIp + ":" + ProxyService.PROXY_PORT);
+                        startProxyService();
+                        startDeviceUpdates();
                     });
                 }
 
@@ -223,7 +249,7 @@ public class MainActivity extends Activity {
                 public void onPacketForwarded(int bytes) {
                     totalBytes += bytes;
                     runOnUiThread(() -> {
-                        connectedDevicesLabel.setText("Data transferred: " + formatBytes(totalBytes));
+                        updateConnectedDevicesLabel();
                     });
                 }
 
@@ -242,6 +268,7 @@ public class MainActivity extends Activity {
             toggleButton.setEnabled(true);
             appendLog("Router is now active");
         });
+        startDeviceUpdates();
     }
 
     private void stopRouter() {
@@ -251,6 +278,8 @@ public class MainActivity extends Activity {
         Intent vpnStopIntent = new Intent(this, RouterVpnService.class);
         vpnStopIntent.setAction("STOP");
         startService(vpnStopIntent);
+
+        stopProxyService();
         
         // Stop hotspot service
         if (isServiceBound) {
@@ -262,6 +291,7 @@ public class MainActivity extends Activity {
         startService(hotspotStopIntent);
         
         isRouterActive = false;
+        stopDeviceUpdates();
         resetUI();
         appendLog("Router stopped");
     }
@@ -272,10 +302,11 @@ public class MainActivity extends Activity {
         ssidText.setText("---");
         passwordText.setText("---");
         ipText.setText("---");
-        connectedDevicesLabel.setText("Connected Devices: 0");
         toggleButton.setText("Start Router");
         toggleButton.setEnabled(true);
         totalBytes = 0;
+        connectedDevices = 0;
+        updateConnectedDevicesLabel();
     }
 
     private void appendLog(String message) {
@@ -294,6 +325,88 @@ public class MainActivity extends Activity {
         });
         
         Log.i(TAG, message);
+    }
+
+    private void startDeviceUpdates() {
+        deviceHandler.removeCallbacks(deviceUpdater);
+        deviceHandler.post(deviceUpdater);
+    }
+
+    private void stopDeviceUpdates() {
+        deviceHandler.removeCallbacks(deviceUpdater);
+    }
+
+    private void updateConnectedDevices(int count) {
+        connectedDevices = count;
+        runOnUiThread(this::updateConnectedDevicesLabel);
+    }
+
+    private void updateConnectedDevicesLabel() {
+        connectedDevicesLabel.setText("Connected Devices: " + connectedDevices);
+    }
+
+    private int getConnectedDeviceCount() {
+        int count = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/net/arp"))) {
+            String line = reader.readLine(); // Skip header
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length >= 6) {
+                    String flags = parts[2];
+                    String mac = parts[3];
+                    String device = parts[5];
+                    if ("0x2".equals(flags)
+                        && mac != null
+                        && !"00:00:00:00:00:00".equals(mac)
+                        && isHotspotInterface(device)) {
+                        count++;
+                    }
+                }
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to read /proc/net/arp", e);
+        }
+        return count;
+    }
+
+    private boolean isHotspotInterface(String device) {
+        return device != null
+            && (device.startsWith("wlan")
+                || device.startsWith("ap")
+                || device.startsWith("swlan")
+                || device.startsWith("wifi"));
+    }
+
+    private String getHotspotIpAddress() {
+        try {
+            for (NetworkInterface intf : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (isHotspotInterface(intf.getName())) {
+                    for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
+                        if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                            return addr.getHostAddress();
+                        }
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            Log.w(TAG, "Failed to read hotspot IP", e);
+        }
+        return "192.168.43.1";
+    }
+
+    private void startProxyService() {
+        Intent proxyIntent = new Intent(this, ProxyService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(proxyIntent);
+        } else {
+            startService(proxyIntent);
+        }
+    }
+
+    private void stopProxyService() {
+        Intent proxyStopIntent = new Intent(this, ProxyService.class);
+        proxyStopIntent.setAction("STOP");
+        startService(proxyStopIntent);
     }
 
     private String getFailureReason(int reason) {
@@ -320,6 +433,7 @@ public class MainActivity extends Activity {
             unbindService(serviceConnection);
             isServiceBound = false;
         }
+        stopDeviceUpdates();
         super.onDestroy();
     }
 }

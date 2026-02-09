@@ -44,6 +44,11 @@
             android:foregroundServiceType="specialUse"
             android:exported="false" />
 
+        <service
+            android:name=".ProxyService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
+
     </application>
 
 </manifest>
