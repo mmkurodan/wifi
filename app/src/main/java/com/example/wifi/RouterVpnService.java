@@ -307,6 +307,7 @@ public class RouterVpnService extends VpnService {
 
     private void log(String message) {
         Log.i(TAG, message);
+        AppLogBuffer.add(TAG, message);
         if (statusCallback != null) {
             new Handler(Looper.getMainLooper()).post(() -> 
                 statusCallback.onLog(message));
@@ -335,6 +336,11 @@ public class RouterVpnService extends VpnService {
         PendingIntent stopPending = PendingIntent.getService(
             this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE);
 
+        Intent exitIntent = new Intent(this, AppExitReceiver.class);
+        exitIntent.setAction(AppExitReceiver.ACTION_EXIT_APP);
+        PendingIntent exitPending = PendingIntent.getBroadcast(
+            this, 1, exitIntent, PendingIntent.FLAG_IMMUTABLE);
+
         Intent mainIntent = new Intent(this, MainActivity.class);
         PendingIntent mainPending = PendingIntent.getActivity(
             this, 0, mainIntent, PendingIntent.FLAG_IMMUTABLE);
@@ -352,6 +358,7 @@ public class RouterVpnService extends VpnService {
             .setSmallIcon(android.R.drawable.ic_menu_share)
             .setContentIntent(mainPending)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Exit", exitPending)
             .setOngoing(true)
             .build();
     }

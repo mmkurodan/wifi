@@ -30,7 +30,8 @@
             android:name=".RouterVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:foregroundServiceType="specialUse"
-            android:exported="false">
+            android:exported="false"
+            android:stopWithTask="false">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
@@ -42,11 +43,17 @@
         <service
             android:name=".HotspotService"
             android:foregroundServiceType="specialUse"
-            android:exported="false" />
+            android:exported="false"
+            android:stopWithTask="false" />
 
         <service
             android:name=".ProxyService"
             android:foregroundServiceType="specialUse"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <receiver
+            android:name=".AppExitReceiver"
             android:exported="false" />
 
     </application>

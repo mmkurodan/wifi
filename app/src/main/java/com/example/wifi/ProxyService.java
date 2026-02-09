@@ -24,19 +24,25 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ProxyService extends Service {
-    public static final int PROXY_PORT = 8888;
+    public static final int DEFAULT_PORT = 8888;
+    public static final String EXTRA_PORT = "extra_port";
     private static final String TAG = "ProxyService";
     private static final String CHANNEL_ID = "proxy_channel";
     private static final int NOTIFICATION_ID = 3;
+    private static final long CLIENT_TTL_MS = 2 * 60 * 1000;
+    private static final ConcurrentHashMap<String, Long> CLIENT_LAST_SEEN = new ConcurrentHashMap<>();
+    private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
 
-    private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService executor;
     private ServerSocket serverSocket;
+    private volatile int proxyPort = DEFAULT_PORT;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -57,13 +63,19 @@ public class ProxyService extends Service {
             return START_NOT_STICKY;
         }
 
+        int port = AppPreferences.getProxyPort(this);
+        if (intent != null && intent.hasExtra(EXTRA_PORT)) {
+            port = intent.getIntExtra(EXTRA_PORT, port);
+        }
+        proxyPort = port;
+
         startForeground(NOTIFICATION_ID, createNotification());
         startProxy();
         return START_STICKY;
     }
 
     private void startProxy() {
-        if (running.getAndSet(true)) {
+        if (RUNNING.getAndSet(true)) {
             return;
         }
         executor = Executors.newCachedThreadPool();
@@ -74,25 +86,27 @@ public class ProxyService extends Service {
         try {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
-            serverSocket.bind(new InetSocketAddress("0.0.0.0", PROXY_PORT));
-            log("Proxy listening on port " + PROXY_PORT);
+            serverSocket.bind(new InetSocketAddress("0.0.0.0", proxyPort));
+            log("Proxy listening on port " + proxyPort);
 
-            while (running.get()) {
+            while (RUNNING.get()) {
                 Socket client = serverSocket.accept();
                 client.setSoTimeout(30000);
                 executor.submit(() -> handleClient(client));
             }
         } catch (IOException e) {
-            if (running.get()) {
+            if (RUNNING.get()) {
                 log("Proxy error: " + e.getMessage());
             }
         } finally {
             closeServer();
+            RUNNING.set(false);
         }
     }
 
     private void handleClient(Socket client) {
         try (Socket c = client) {
+            recordClient(c);
             InputStream in = new BufferedInputStream(c.getInputStream());
             OutputStream out = c.getOutputStream();
             HttpRequest request = HttpRequest.read(in);
@@ -279,16 +293,47 @@ public class ProxyService extends Service {
 
     private void log(String message) {
         Log.i(TAG, message);
+        AppLogBuffer.add(TAG, message);
     }
 
     private void stopProxy() {
-        running.set(false);
+        RUNNING.set(false);
         closeServer();
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
         }
+        CLIENT_LAST_SEEN.clear();
         log("Proxy stopped");
+    }
+
+    private void recordClient(Socket client) {
+        if (client == null || client.getInetAddress() == null) {
+            return;
+        }
+        String ip = client.getInetAddress().getHostAddress();
+        if (ip != null && !ip.isEmpty()) {
+            CLIENT_LAST_SEEN.put(ip, System.currentTimeMillis());
+            AppLogBuffer.add(TAG, "Client connected: " + ip);
+        }
+    }
+
+    public static int getActiveClientCount() {
+        pruneClients();
+        return CLIENT_LAST_SEEN.size();
+    }
+
+    public static boolean isRunning() {
+        return RUNNING.get();
+    }
+
+    private static void pruneClients() {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, Long> entry : CLIENT_LAST_SEEN.entrySet()) {
+            if (now - entry.getValue() > CLIENT_TTL_MS) {
+                CLIENT_LAST_SEEN.remove(entry.getKey());
+            }
+        }
     }
 
     private void closeServer() {
@@ -324,6 +369,11 @@ public class ProxyService extends Service {
         PendingIntent stopPending = PendingIntent.getService(
             this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE);
 
+        Intent exitIntent = new Intent(this, AppExitReceiver.class);
+        exitIntent.setAction(AppExitReceiver.ACTION_EXIT_APP);
+        PendingIntent exitPending = PendingIntent.getBroadcast(
+            this, 1, exitIntent, PendingIntent.FLAG_IMMUTABLE);
+
         Intent mainIntent = new Intent(this, MainActivity.class);
         PendingIntent mainPending = PendingIntent.getActivity(
             this, 0, mainIntent, PendingIntent.FLAG_IMMUTABLE);
@@ -341,6 +391,7 @@ public class ProxyService extends Service {
             .setSmallIcon(android.R.drawable.ic_menu_share)
             .setContentIntent(mainPending)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Exit", exitPending)
             .setOngoing(true)
             .build();
     }

@@ -46,12 +46,13 @@
                     android:text="SSID:"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/ssidText"
+                <EditText
+                    android:id="@+id/ssidInput"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="---" />
+                    android:hint="SSID"
+                    android:singleLine="true" />
             </LinearLayout>
 
             <LinearLayout
@@ -66,18 +67,21 @@
                     android:text="Password:"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/passwordText"
+                <EditText
+                    android:id="@+id/passwordInput"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="---" />
+                    android:hint="Password"
+                    android:inputType="textPassword"
+                    android:singleLine="true" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
 
                 <TextView
                     android:layout_width="100dp"
@@ -93,8 +97,36 @@
                     android:text="---" />
             </LinearLayout>
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="100dp"
+                    android:layout_height="wrap_content"
+                    android:text="Proxy Port:"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/proxyPortInput"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="8888"
+                    android:inputType="number"
+                    android:singleLine="true" />
+            </LinearLayout>
+
         </LinearLayout>
     </androidx.cardview.widget.CardView>
+
+    <Button
+        android:id="@+id/saveButton"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:text="Save Settings"
+        android:layout_marginBottom="16dp" />
 
     <TextView
         android:id="@+id/connectedDevicesLabel"
@@ -104,12 +136,29 @@
         android:textSize="16sp"
         android:layout_marginBottom="24dp" />
 
-    <Button
-        android:id="@+id/toggleButton"
-        android:layout_width="200dp"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Start Router"
-        android:textSize="18sp" />
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/toggleButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Start Router"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/exitButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:text="Exit"
+            android:textSize="18sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/logText"

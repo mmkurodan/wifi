@@ -1,6 +1,7 @@
 package com.example.wifi;
 
 import android.content.Context;
+import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.LocalOnlyHotspotCallback;
 import android.net.wifi.WifiManager.LocalOnlyHotspotReservation;
@@ -38,7 +39,7 @@ public class WifiHotspotManager {
         this.callback = callback;
     }
 
-    public void startHotspot() {
+    public void startHotspot(String desiredSsid, String desiredPassword) {
         if (isStarted) {
             Log.w(TAG, "Hotspot already started");
             return;
@@ -53,7 +54,7 @@ public class WifiHotspotManager {
         }
 
         try {
-            wifiManager.startLocalOnlyHotspot(new LocalOnlyHotspotCallback() {
+            LocalOnlyHotspotCallback callbackWrapper = new LocalOnlyHotspotCallback() {
                 @Override
                 public void onStarted(LocalOnlyHotspotReservation res) {
                     reservation = res;
@@ -104,8 +105,28 @@ public class WifiHotspotManager {
                         callback.onFailed(reason);
                     }
                 }
-            }, new Handler(Looper.getMainLooper()));
-            
+            };
+
+            boolean hasCustomConfig = desiredSsid != null && !desiredSsid.isEmpty();
+            boolean hasPassphrase = desiredPassword != null && !desiredPassword.isEmpty();
+            boolean shouldUseCustom = hasCustomConfig && hasPassphrase;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && shouldUseCustom) {
+                SoftApConfiguration.Builder configBuilder = new SoftApConfiguration.Builder();
+                if (hasCustomConfig) {
+                    configBuilder.setSsid(desiredSsid);
+                }
+                if (hasPassphrase) {
+                    configBuilder.setPassphrase(desiredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK);
+                }
+                wifiManager.startLocalOnlyHotspot(
+                    configBuilder.build(),
+                    context.getMainExecutor(),
+                    callbackWrapper
+                );
+            } else {
+                wifiManager.startLocalOnlyHotspot(callbackWrapper, new Handler(Looper.getMainLooper()));
+            }
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception starting hotspot", e);
             if (callback != null) {

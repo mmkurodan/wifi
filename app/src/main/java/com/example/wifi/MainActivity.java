@@ -13,9 +13,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -26,9 +28,7 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
-import java.text.SimpleDateFormat;
 import java.util.Collections;
-import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -38,28 +38,35 @@ public class MainActivity extends Activity {
     private static final long DEVICE_REFRESH_MS = 3000;
 
     private TextView statusText;
-    private TextView ssidText;
-    private TextView passwordText;
+    private EditText ssidInput;
+    private EditText passwordInput;
     private TextView ipText;
     private TextView connectedDevicesLabel;
     private TextView logText;
     private Button toggleButton;
+    private EditText proxyPortInput;
+    private Button saveButton;
+    private Button exitButton;
 
     private HotspotService hotspotService;
     private boolean isServiceBound = false;
     private boolean isRouterActive = false;
     private long totalBytes = 0;
     private int connectedDevices = 0;
+    private int proxyConnections = 0;
 
     private final Handler deviceHandler = new Handler(Looper.getMainLooper());
     private final Runnable deviceUpdater = new Runnable() {
         @Override
         public void run() {
             if (!isRouterActive) {
+                refreshLogView();
                 return;
             }
-            int count = getConnectedDeviceCount();
-            updateConnectedDevices(count);
+            int arpCount = getArpDeviceCount();
+            int proxyCount = ProxyService.getActiveClientCount();
+            updateConnectedDevices(arpCount, proxyCount);
+            refreshLogView();
             deviceHandler.postDelayed(this, DEVICE_REFRESH_MS);
         }
     };
@@ -75,14 +82,25 @@ public class MainActivity extends Activity {
                 @Override
                 public void onHotspotStarted(String ssid, String password) {
                     runOnUiThread(() -> {
-                        ssidText.setText(ssid != null ? ssid : "N/A");
-                        passwordText.setText(password != null ? password : "N/A");
                         String hotspotIp = getHotspotIpAddress();
                         ipText.setText(hotspotIp);
-                        appendLog("Hotspot started: " + ssid);
+                        AppPreferences.saveHotspotIfEmpty(MainActivity.this, ssid, password);
+                        if (TextUtils.isEmpty(ssidInput.getText().toString()) && !TextUtils.isEmpty(ssid)) {
+                            ssidInput.setText(ssid);
+                        }
+                        if (TextUtils.isEmpty(passwordInput.getText().toString()) && !TextUtils.isEmpty(password)) {
+                            passwordInput.setText(password);
+                        }
 
-                        appendLog("Set client proxy to " + hotspotIp + ":" + ProxyService.PROXY_PORT);
-                        startProxyService();
+                        int proxyPort = getProxyPortFromInput();
+                        appendLog("Hotspot started: " + ssid);
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && hasCustomHotspotConfig()) {
+                            appendLog("Custom SSID/password cannot be applied on this Android version");
+                        }
+                        appendLog("Set client proxy to " + hotspotIp + ":" + proxyPort);
+                        startProxyService(proxyPort);
+                        isRouterActive = true;
+                        setRouterActiveUi(true);
                         startDeviceUpdates();
                     });
                 }
@@ -90,6 +108,8 @@ public class MainActivity extends Activity {
                 @Override
                 public void onHotspotStopped() {
                     runOnUiThread(() -> {
+                        isRouterActive = false;
+                        stopDeviceUpdates();
                         resetUI();
                         appendLog("Hotspot stopped");
                     });
@@ -98,6 +118,8 @@ public class MainActivity extends Activity {
                 @Override
                 public void onHotspotFailed(int reason) {
                     runOnUiThread(() -> {
+                        isRouterActive = false;
+                        stopDeviceUpdates();
                         appendLog("Hotspot failed: " + getFailureReason(reason));
                         Toast.makeText(MainActivity.this, 
                             "Hotspot failed: " + getFailureReason(reason), 
@@ -124,14 +146,24 @@ public class MainActivity extends Activity {
         checkPermissions();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        syncUiState();
+        refreshLogView();
+    }
+
     private void initViews() {
         statusText = findViewById(R.id.statusText);
-        ssidText = findViewById(R.id.ssidText);
-        passwordText = findViewById(R.id.passwordText);
+        ssidInput = findViewById(R.id.ssidInput);
+        passwordInput = findViewById(R.id.passwordInput);
         ipText = findViewById(R.id.ipText);
         connectedDevicesLabel = findViewById(R.id.connectedDevicesLabel);
         logText = findViewById(R.id.logText);
         toggleButton = findViewById(R.id.toggleButton);
+        proxyPortInput = findViewById(R.id.proxyPortInput);
+        saveButton = findViewById(R.id.saveButton);
+        exitButton = findViewById(R.id.exitButton);
 
         logText.setMovementMethod(new ScrollingMovementMethod());
         
@@ -143,6 +175,10 @@ public class MainActivity extends Activity {
             }
         });
 
+        saveButton.setOnClickListener(v -> saveSettings(true));
+        exitButton.setOnClickListener(v -> exitApp());
+
+        loadSettings();
         appendLog("WiFi Router initialized");
     }
 
@@ -193,13 +229,165 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void loadSettings() {
+        String savedSsid = AppPreferences.getSsid(this);
+        String savedPassword = AppPreferences.getPassword(this);
+        int savedPort = AppPreferences.getProxyPort(this);
+
+        if (!TextUtils.isEmpty(savedSsid)) {
+            ssidInput.setText(savedSsid);
+        }
+        if (!TextUtils.isEmpty(savedPassword)) {
+            passwordInput.setText(savedPassword);
+        }
+        proxyPortInput.setText(String.valueOf(savedPort));
+    }
+
+    private boolean saveSettings(boolean showToast) {
+        String ssid = ssidInput.getText().toString().trim();
+        String password = passwordInput.getText().toString();
+        int port = parseProxyPort();
+
+        if (!TextUtils.isEmpty(password) && password.length() < 8) {
+            if (showToast) {
+                Toast.makeText(this, "Password must be at least 8 characters", Toast.LENGTH_LONG).show();
+            }
+            return false;
+        }
+
+        if (!TextUtils.isEmpty(ssid)
+            && TextUtils.isEmpty(password)
+            && TextUtils.isEmpty(AppPreferences.getPassword(this))) {
+            if (showToast) {
+                Toast.makeText(this, "Password is required when setting a custom SSID", Toast.LENGTH_LONG).show();
+            }
+            return false;
+        }
+
+        if (port <= 0) {
+            if (showToast) {
+                Toast.makeText(this, "Proxy port must be between 1 and 65535", Toast.LENGTH_LONG).show();
+            }
+            return false;
+        }
+
+        if (!TextUtils.isEmpty(ssid)) {
+            AppPreferences.saveSsid(this, ssid);
+        }
+        if (!TextUtils.isEmpty(password)) {
+            AppPreferences.savePassword(this, password);
+        }
+        AppPreferences.saveProxyPort(this, port);
+
+        if (showToast) {
+            appendLog("Settings saved");
+        }
+        return true;
+    }
+
+    private int parseProxyPort() {
+        String value = proxyPortInput.getText().toString().trim();
+        if (TextUtils.isEmpty(value)) {
+            return AppPreferences.getProxyPort(this);
+        }
+        try {
+            int port = Integer.parseInt(value);
+            if (port >= 1 && port <= 65535) {
+                return port;
+            }
+        } catch (NumberFormatException ignored) {
+            // Invalid number
+        }
+        return -1;
+    }
+
+    private int getProxyPortFromInput() {
+        int port = parseProxyPort();
+        if (port <= 0) {
+            port = AppPreferences.getProxyPort(this);
+        }
+        return port;
+    }
+
+    private String getDesiredSsid() {
+        String ssid = ssidInput.getText().toString().trim();
+        if (TextUtils.isEmpty(ssid)) {
+            ssid = AppPreferences.getSsid(this);
+        }
+        return ssid;
+    }
+
+    private String getDesiredPassword() {
+        String password = passwordInput.getText().toString();
+        if (TextUtils.isEmpty(password)) {
+            password = AppPreferences.getPassword(this);
+        }
+        return password;
+    }
+
+    private boolean hasCustomHotspotConfig() {
+        return !TextUtils.isEmpty(getDesiredSsid()) || !TextUtils.isEmpty(getDesiredPassword());
+    }
+
+    private void setRouterActiveUi(boolean active) {
+        if (active) {
+            statusText.setText("WiFi Router Active");
+            statusText.setTextColor(0xFF4CAF50); // Green
+            toggleButton.setText("Stop Router");
+            toggleButton.setEnabled(true);
+        } else {
+            statusText.setText("WiFi Router");
+            statusText.setTextColor(0xFF000000); // Black
+            toggleButton.setText("Start Router");
+            toggleButton.setEnabled(true);
+        }
+    }
+
+    private void syncUiState() {
+        boolean running = ProxyService.isRunning();
+        isRouterActive = running;
+        if (running) {
+            setRouterActiveUi(true);
+            ipText.setText(getHotspotIpAddress());
+            startDeviceUpdates();
+        } else {
+            setRouterActiveUi(false);
+            stopDeviceUpdates();
+        }
+        updateConnectedDevicesLabel();
+    }
+
+    private void exitApp() {
+        appendLog("Exiting app...");
+        AppExitReceiver.stopAllServices(this);
+        isRouterActive = false;
+        stopDeviceUpdates();
+        setRouterActiveUi(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            finishAndRemoveTask();
+        } else {
+            finish();
+        }
+    }
+
     private void startRouter() {
         appendLog("Starting router...");
         toggleButton.setEnabled(false);
         toggleButton.setText("Starting...");
+
+        if (!saveSettings(true)) {
+            toggleButton.setEnabled(true);
+            toggleButton.setText("Start Router");
+            return;
+        }
+
+        String ssid = getDesiredSsid();
+        String password = getDesiredPassword();
         
         // Start hotspot service
         Intent serviceIntent = new Intent(this, HotspotService.class);
+        serviceIntent.putExtra(HotspotService.EXTRA_SSID, ssid);
+        serviceIntent.putExtra(HotspotService.EXTRA_PASSWORD, password);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
         } else {
@@ -262,10 +450,7 @@ public class MainActivity extends Activity {
 
         isRouterActive = true;
         runOnUiThread(() -> {
-            statusText.setText("WiFi Router Active");
-            statusText.setTextColor(0xFF4CAF50); // Green
-            toggleButton.setText("Stop Router");
-            toggleButton.setEnabled(true);
+            setRouterActiveUi(true);
             appendLog("Router is now active");
         });
         startDeviceUpdates();
@@ -273,23 +458,13 @@ public class MainActivity extends Activity {
 
     private void stopRouter() {
         appendLog("Stopping router...");
-        
-        // Stop VPN service
-        Intent vpnStopIntent = new Intent(this, RouterVpnService.class);
-        vpnStopIntent.setAction("STOP");
-        startService(vpnStopIntent);
 
-        stopProxyService();
-        
-        // Stop hotspot service
+        AppExitReceiver.stopAllServices(this);
         if (isServiceBound) {
             unbindService(serviceConnection);
             isServiceBound = false;
         }
-        Intent hotspotStopIntent = new Intent(this, HotspotService.class);
-        hotspotStopIntent.setAction("STOP");
-        startService(hotspotStopIntent);
-        
+
         isRouterActive = false;
         stopDeviceUpdates();
         resetUI();
@@ -297,24 +472,23 @@ public class MainActivity extends Activity {
     }
 
     private void resetUI() {
-        statusText.setText("WiFi Router");
-        statusText.setTextColor(0xFF000000); // Black
-        ssidText.setText("---");
-        passwordText.setText("---");
+        setRouterActiveUi(false);
         ipText.setText("---");
-        toggleButton.setText("Start Router");
-        toggleButton.setEnabled(true);
         totalBytes = 0;
         connectedDevices = 0;
+        proxyConnections = 0;
         updateConnectedDevicesLabel();
     }
 
     private void appendLog(String message) {
-        String timestamp = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
-        String logEntry = "[" + timestamp + "] " + message + "\n";
-        logText.append(logEntry);
-        
-        // Auto-scroll to bottom safely after layout is ready
+        AppLogBuffer.add(TAG, message);
+        refreshLogView();
+        Log.i(TAG, message);
+    }
+
+    private void refreshLogView() {
+        String text = AppLogBuffer.getText();
+        logText.setText(text);
         logText.post(() -> {
             if (logText.getLayout() != null) {
                 int scrollAmount = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
@@ -323,8 +497,6 @@ public class MainActivity extends Activity {
                 }
             }
         });
-        
-        Log.i(TAG, message);
     }
 
     private void startDeviceUpdates() {
@@ -336,16 +508,19 @@ public class MainActivity extends Activity {
         deviceHandler.removeCallbacks(deviceUpdater);
     }
 
-    private void updateConnectedDevices(int count) {
-        connectedDevices = count;
+    private void updateConnectedDevices(int arpCount, int proxyCount) {
+        connectedDevices = arpCount;
+        proxyConnections = proxyCount;
         runOnUiThread(this::updateConnectedDevicesLabel);
     }
 
     private void updateConnectedDevicesLabel() {
-        connectedDevicesLabel.setText("Connected Devices: " + connectedDevices);
+        int displayCount = Math.max(connectedDevices, proxyConnections);
+        connectedDevicesLabel.setText(
+            "Connected Devices: " + displayCount + " (proxy: " + proxyConnections + ")");
     }
 
-    private int getConnectedDeviceCount() {
+    private int getArpDeviceCount() {
         int count = 0;
         try (BufferedReader reader = new BufferedReader(new FileReader("/proc/net/arp"))) {
             String line = reader.readLine(); // Skip header
@@ -394,8 +569,9 @@ public class MainActivity extends Activity {
         return "192.168.43.1";
     }
 
-    private void startProxyService() {
+    private void startProxyService(int port) {
         Intent proxyIntent = new Intent(this, ProxyService.class);
+        proxyIntent.putExtra(ProxyService.EXTRA_PORT, port);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(proxyIntent);
         } else {
