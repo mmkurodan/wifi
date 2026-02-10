@@ -62,6 +62,10 @@ public class MainActivity extends Activity {
     private long totalBytes = 0;
     private int connectedDevices = 0;
     private int proxyConnections = 0;
+    private long currentTotalBytes = 0;
+    private long lastStatsBytes = 0;
+    private long lastStatsTimeMs = 0;
+    private double currentSpeedKbps = 0.0;
 
     private final Handler deviceHandler = new Handler(Looper.getMainLooper());
     private final Runnable deviceUpdater = new Runnable() {
@@ -73,6 +77,8 @@ public class MainActivity extends Activity {
             }
             int arpCount = getArpDeviceCount();
             int proxyCount = ProxyService.getActiveClientCount();
+            long proxyBytes = ProxyService.getTotalBytes();
+            updateTrafficStats(totalBytes + proxyBytes);
             updateConnectedDevices(arpCount, proxyCount);
             refreshLogView();
             deviceHandler.postDelayed(this, DEVICE_REFRESH_MS);
@@ -382,6 +388,11 @@ public class MainActivity extends Activity {
         if (running) {
             setRouterActiveUi(true);
             ipText.setText(getHotspotIpAddress());
+            if (lastStatsTimeMs == 0) {
+                currentTotalBytes = totalBytes + ProxyService.getTotalBytes();
+                lastStatsBytes = currentTotalBytes;
+                lastStatsTimeMs = System.currentTimeMillis();
+            }
             startDeviceUpdates();
         } else {
             setRouterActiveUi(false);
@@ -434,6 +445,14 @@ public class MainActivity extends Activity {
             toggleButton.setText("Start Router");
             return;
         }
+
+        totalBytes = 0;
+        currentTotalBytes = 0;
+        currentSpeedKbps = 0.0;
+        lastStatsBytes = 0;
+        lastStatsTimeMs = System.currentTimeMillis();
+        ProxyService.resetStats();
+        updateConnectedDevicesLabel();
 
         String ssid = getDesiredSsid();
         String password = getDesiredPassword();
@@ -531,6 +550,10 @@ public class MainActivity extends Activity {
         totalBytes = 0;
         connectedDevices = 0;
         proxyConnections = 0;
+        currentTotalBytes = 0;
+        currentSpeedKbps = 0.0;
+        lastStatsBytes = 0;
+        lastStatsTimeMs = 0;
         updateConnectedDevicesLabel();
     }
 
@@ -563,10 +586,29 @@ public class MainActivity extends Activity {
         runOnUiThread(this::updateConnectedDevicesLabel);
     }
 
+    private void updateTrafficStats(long totalBytesNow) {
+        long now = System.currentTimeMillis();
+        currentTotalBytes = totalBytesNow;
+        if (lastStatsTimeMs > 0) {
+            long deltaBytes = Math.max(0, totalBytesNow - lastStatsBytes);
+            long deltaMs = now - lastStatsTimeMs;
+            if (deltaMs > 0) {
+                currentSpeedKbps = (deltaBytes / 1024.0) / (deltaMs / 1000.0);
+            }
+        }
+        lastStatsBytes = totalBytesNow;
+        lastStatsTimeMs = now;
+    }
+
     private void updateConnectedDevicesLabel() {
         int displayCount = Math.max(connectedDevices, proxyConnections);
+        String totalText = String.format(Locale.US, "%.1f KB", currentTotalBytes / 1024.0);
+        String speedText = String.format(Locale.US, "%.1f KB/s", currentSpeedKbps);
         connectedDevicesLabel.setText(
-            "Connected Devices: " + displayCount + " (proxy: " + proxyConnections + ")");
+            "Connected Devices: " + displayCount
+                + " (proxy: " + proxyConnections + ")"
+                + " | Data: " + totalText
+                + " | Speed: " + speedText);
     }
 
     private int getArpDeviceCount() {

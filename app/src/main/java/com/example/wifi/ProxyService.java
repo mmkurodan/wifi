@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ProxyService extends Service {
     public static final int DEFAULT_PORT = 8888;
@@ -39,6 +40,7 @@ public class ProxyService extends Service {
     private static final long CLIENT_TTL_MS = 2 * 60 * 1000;
     private static final ConcurrentHashMap<String, Long> CLIENT_LAST_SEEN = new ConcurrentHashMap<>();
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
+    private static final AtomicLong TOTAL_BYTES = new AtomicLong(0);
 
     private ExecutorService executor;
     private ServerSocket serverSocket;
@@ -193,6 +195,7 @@ public class ProxyService extends Service {
         int read;
         try {
             while ((read = in.read(buffer)) != -1) {
+                TOTAL_BYTES.addAndGet(read);
                 out.write(buffer, 0, read);
                 out.flush();
             }
@@ -304,6 +307,7 @@ public class ProxyService extends Service {
             executor = null;
         }
         CLIENT_LAST_SEEN.clear();
+        TOTAL_BYTES.set(0);
         log("Proxy stopped");
     }
 
@@ -313,8 +317,10 @@ public class ProxyService extends Service {
         }
         String ip = client.getInetAddress().getHostAddress();
         if (ip != null && !ip.isEmpty()) {
-            CLIENT_LAST_SEEN.put(ip, System.currentTimeMillis());
-            AppLogBuffer.add(TAG, "Client connected: " + ip);
+            Long previous = CLIENT_LAST_SEEN.put(ip, System.currentTimeMillis());
+            if (previous == null) {
+                log("Client connected: " + ip);
+            }
         }
     }
 
@@ -325,6 +331,15 @@ public class ProxyService extends Service {
 
     public static boolean isRunning() {
         return RUNNING.get();
+    }
+
+    public static long getTotalBytes() {
+        return TOTAL_BYTES.get();
+    }
+
+    public static void resetStats() {
+        TOTAL_BYTES.set(0);
+        CLIENT_LAST_SEEN.clear();
     }
 
     private static void pruneClients() {
