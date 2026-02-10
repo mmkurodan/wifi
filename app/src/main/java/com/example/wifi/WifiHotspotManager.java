@@ -9,7 +9,10 @@ import android.net.wifi.WifiConfiguration;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.util.Log;
+
+import java.lang.reflect.Method;
 
 /**
  * Manages Local-only Hotspot for WiFi AP functionality.
@@ -107,15 +110,53 @@ public class WifiHotspotManager {
                 }
             };
 
-            // Start local-only hotspot using system configuration. Custom SSID/password
-            // may not be supported on all Android versions; desired values are saved to
-            // preferences and displayed in the UI, but not forced here.
+            boolean hasCustomConfig = !TextUtils.isEmpty(desiredSsid);
+            boolean hasPassphrase = !TextUtils.isEmpty(desiredPassword);
+            boolean shouldUseCustom = hasCustomConfig && hasPassphrase;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && shouldUseCustom) {
+                if (tryStartHotspotWithConfig(desiredSsid, desiredPassword, callbackWrapper)) {
+                    return;
+                }
+                Log.w(TAG, "Custom hotspot config not supported; using system defaults");
+            }
+
             wifiManager.startLocalOnlyHotspot(callbackWrapper, new Handler(Looper.getMainLooper()));
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception starting hotspot", e);
             if (callback != null) {
                 callback.onFailed(-2);
             }
+        }
+    }
+
+    private boolean tryStartHotspotWithConfig(String ssid, String password, LocalOnlyHotspotCallback callback) {
+        try {
+            Class<?> configClass = Class.forName("android.net.wifi.SoftApConfiguration");
+            Class<?> builderClass = Class.forName("android.net.wifi.SoftApConfiguration$Builder");
+            Object builder = builderClass.getConstructor().newInstance();
+
+            Method setSsid = builderClass.getMethod("setSsid", String.class);
+            setSsid.invoke(builder, ssid);
+
+            Method setPassphrase = builderClass.getMethod("setPassphrase", String.class, int.class);
+            int securityType = (int) configClass.getField("SECURITY_TYPE_WPA2_PSK").get(null);
+            setPassphrase.invoke(builder, password, securityType);
+
+            Method build = builderClass.getMethod("build");
+            Object config = build.invoke(builder);
+
+            Method start = wifiManager.getClass().getMethod(
+                "startLocalOnlyHotspot",
+                configClass,
+                java.util.concurrent.Executor.class,
+                LocalOnlyHotspotCallback.class
+            );
+            start.invoke(wifiManager, config, context.getMainExecutor(), callback);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to apply custom hotspot config", e);
+            return false;
         }
     }
 

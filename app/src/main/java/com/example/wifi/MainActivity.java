@@ -2,6 +2,7 @@ package com.example.wifi;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -13,14 +14,15 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.text.TextUtils;
-import android.text.method.ScrollingMovementMethod;
-import android.widget.Switch;
-import android.provider.Settings;
 import android.net.Uri;
+import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -46,6 +48,7 @@ public class MainActivity extends Activity {
     private TextView ipText;
     private TextView connectedDevicesLabel;
     private TextView logText;
+    private ScrollView logScroll;
     private Button toggleButton;
     private EditText proxyPortInput;
     private Button saveButton;
@@ -156,6 +159,7 @@ public class MainActivity extends Activity {
         super.onResume();
         syncUiState();
         refreshLogView();
+        checkNotificationEnabled();
     }
 
     private void initViews() {
@@ -165,6 +169,7 @@ public class MainActivity extends Activity {
         ipText = findViewById(R.id.ipText);
         connectedDevicesLabel = findViewById(R.id.connectedDevicesLabel);
         logText = findViewById(R.id.logText);
+        logScroll = findViewById(R.id.logScroll);
         toggleButton = findViewById(R.id.toggleButton);
         proxyPortInput = findViewById(R.id.proxyPortInput);
         saveButton = findViewById(R.id.saveButton);
@@ -172,8 +177,6 @@ public class MainActivity extends Activity {
         keepRunningSwitch = findViewById(R.id.keepRunningSwitch);
         notifSettingsButton = findViewById(R.id.notifSettingsButton);
 
-        logText.setMovementMethod(new ScrollingMovementMethod());
-        
         toggleButton.setOnClickListener(v -> {
             if (isRouterActive) {
                 stopRouter();
@@ -201,7 +204,8 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions = new String[]{
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.NEARBY_WIFI_DEVICES
+                Manifest.permission.NEARBY_WIFI_DEVICES,
+                Manifest.permission.POST_NOTIFICATIONS
             };
         } else {
             permissions = new String[]{
@@ -226,10 +230,18 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (requestCode == PERMISSION_REQUEST_CODE) {
             boolean allGranted = true;
+            boolean notificationsGranted = true;
             for (int result : grantResults) {
                 if (result != PackageManager.PERMISSION_GRANTED) {
                     allGranted = false;
                     break;
+                }
+            }
+
+            for (int i = 0; i < permissions.length; i++) {
+                if (Manifest.permission.POST_NOTIFICATIONS.equals(permissions[i])
+                    && grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                    notificationsGranted = false;
                 }
             }
             
@@ -240,10 +252,16 @@ public class MainActivity extends Activity {
             } else {
                 appendLog("All permissions granted");
             }
+
+            if (!notificationsGranted) {
+                appendLog("Notification permission denied - background status may not be visible");
+            }
+            checkNotificationEnabled();
         }
     }
 
     private void loadSettings() {
+        AppPreferences.ensureDefaultHotspotConfig(this);
         String savedSsid = AppPreferences.getSsid(this);
         String savedPassword = AppPreferences.getPassword(this);
         int savedPort = AppPreferences.getProxyPort(this);
@@ -374,12 +392,7 @@ public class MainActivity extends Activity {
 
     private void exitApp() {
         appendLog("Exiting app...");
-        // Stop services only if user has not opted to keep running in background
-        if (!AppPreferences.getKeepRunning(this)) {
-            AppExitReceiver.stopAllServices(this);
-        } else {
-            appendLog("KeepRunning enabled - services will continue in background");
-        }
+        AppExitReceiver.stopAllServices(this);
         isRouterActive = false;
         stopDeviceUpdates();
         setRouterActiveUi(false);
@@ -400,6 +413,15 @@ public class MainActivity extends Activity {
             intent.setData(Uri.parse("package:" + getPackageName()));
         }
         startActivity(intent);
+    }
+
+    private void checkNotificationEnabled() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null && !manager.areNotificationsEnabled()) {
+                appendLog("Notifications are disabled. Enable them to keep status visible.");
+            }
+        }
     }
 
     private void startRouter() {
@@ -521,14 +543,9 @@ public class MainActivity extends Activity {
     private void refreshLogView() {
         String text = AppLogBuffer.getText();
         logText.setText(text);
-        logText.post(() -> {
-            if (logText.getLayout() != null) {
-                int scrollAmount = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
-                if (scrollAmount > 0) {
-                    logText.scrollTo(0, scrollAmount);
-                }
-            }
-        });
+        if (logScroll != null) {
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        }
     }
 
     private void startDeviceUpdates() {

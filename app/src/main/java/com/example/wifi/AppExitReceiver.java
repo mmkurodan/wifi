@@ -16,12 +16,6 @@ public class AppExitReceiver extends BroadcastReceiver {
     }
 
     public static void stopAllServices(Context context) {
-        // If user requested to keep running in background, do not stop services.
-        if (AppPreferences.getKeepRunning(context)) {
-            AppLogBuffer.add("AppExitReceiver", "KeepRunning enabled - services not stopped");
-            return;
-        }
-
         context.stopService(new Intent(context, RouterVpnService.class));
         context.stopService(new Intent(context, HotspotService.class));
         context.stopService(new Intent(context, ProxyService.class));

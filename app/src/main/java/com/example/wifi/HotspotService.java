@@ -89,6 +89,7 @@ public class HotspotService extends Service {
             desiredSsid = intent.getStringExtra(EXTRA_SSID);
             desiredPassword = intent.getStringExtra(EXTRA_PASSWORD);
         }
+        AppPreferences.ensureDefaultHotspotConfig(this);
         if (TextUtils.isEmpty(desiredSsid)) {
             desiredSsid = AppPreferences.getSsid(this);
         }
