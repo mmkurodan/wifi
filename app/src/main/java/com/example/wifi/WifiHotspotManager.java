@@ -142,6 +142,7 @@ public class WifiHotspotManager {
             Method setPassphrase = builderClass.getMethod("setPassphrase", String.class, int.class);
             int securityType = (int) configClass.getField("SECURITY_TYPE_WPA2_PSK").get(null);
             setPassphrase.invoke(builder, password, securityType);
+            applyDiscoverabilityDefaults(builderClass, configClass, builder);
 
             Method build = builderClass.getMethod("build");
             Object config = build.invoke(builder);
@@ -157,6 +158,23 @@ public class WifiHotspotManager {
         } catch (Exception e) {
             Log.w(TAG, "Failed to apply custom hotspot config", e);
             return false;
+        }
+    }
+
+    private void applyDiscoverabilityDefaults(Class<?> builderClass, Class<?> configClass, Object builder) {
+        try {
+            Method setHiddenSsid = builderClass.getMethod("setHiddenSsid", boolean.class);
+            setHiddenSsid.invoke(builder, false);
+        } catch (ReflectiveOperationException e) {
+            Log.i(TAG, "setHiddenSsid not available");
+        }
+
+        try {
+            int band2GHz = (int) configClass.getField("BAND_2GHZ").get(null);
+            Method setBand = builderClass.getMethod("setBand", int.class);
+            setBand.invoke(builder, band2GHz);
+        } catch (ReflectiveOperationException e) {
+            Log.i(TAG, "setBand(BAND_2GHZ) not available");
         }
     }
 

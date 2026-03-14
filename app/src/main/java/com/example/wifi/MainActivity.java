@@ -97,12 +97,20 @@ public class MainActivity extends Activity {
                 public void onHotspotStarted(String ssid, String password) {
                     runOnUiThread(() -> {
                         String hotspotIp = getHotspotIpAddress();
+                        String requestedSsid = ssidInput.getText().toString().trim();
+                        String requestedPassword = passwordInput.getText().toString();
                         ipText.setText(hotspotIp);
                         AppPreferences.saveHotspotIfEmpty(MainActivity.this, ssid, password);
-                        if (TextUtils.isEmpty(ssidInput.getText().toString()) && !TextUtils.isEmpty(ssid)) {
+                        if (!TextUtils.isEmpty(ssid)) {
+                            if (!TextUtils.isEmpty(requestedSsid) && !TextUtils.equals(requestedSsid, ssid)) {
+                                appendLog("Requested SSID was overridden by Android. Active SSID: " + ssid);
+                            }
                             ssidInput.setText(ssid);
                         }
-                        if (TextUtils.isEmpty(passwordInput.getText().toString()) && !TextUtils.isEmpty(password)) {
+                        if (!TextUtils.isEmpty(password)) {
+                            if (!TextUtils.isEmpty(requestedPassword) && !TextUtils.equals(requestedPassword, password)) {
+                                appendLog("Requested hotspot password was overridden by Android");
+                            }
                             passwordInput.setText(password);
                         }
 
